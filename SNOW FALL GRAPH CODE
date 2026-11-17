@@ -1,0 +1,17 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv("ski_snowfall_2023_2025 CVS.csv")
+
+df["date"] = pd.to_datetime(df["date"])
+df = df.sort_values("date")
+
+for col in df.columns:
+    if "snowfall_mm" in col:
+        plt.plot(df["date"], df[col].fillna(0).cumsum(), label=col.replace("_snowfall_mm", ""))
+
+plt.xlabel("Date")
+plt.ylabel("Total Snowfall (mm)")
+plt.title("Cumulative Snowfall by Resort")
+plt.legend()
+plt.show()
