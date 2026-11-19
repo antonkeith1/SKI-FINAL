@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ski traffic forecast</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#fff;--fg:#1d2330;--mut:#667085;--card:#f4f6fa;--grid:#d9dee7;--acc:#2563eb}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171f;--fg:#e8ebf2;--mut:#98a2b3;--card:#1e2330;--grid:#343b4d;--acc:#6b9bff}}
+:root[data-theme="dark"]{--bg:#14171f;--fg:#e8ebf2;--mut:#98a2b3;--card:#1e2330;--grid:#343b4d;--acc:#6b9bff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:820px;margin:0 auto;padding:18px 16px 28px}
+h1{font-size:21px;margin:0 0 2px}.sub{color:var(--mut);margin:0 0 16px;font-size:13px}
+.panel{background:var(--card);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.row{display:grid;grid-template-columns:150px 1fr 64px;gap:10px;align-items:center;margin:8px 0}
+.row label{font-weight:600;font-size:14px}.row output{text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--acc)}
+select{background:var(--bg);color:var(--fg);border:1px solid var(--grid);border-radius:8px;padding:6px 8px;font:inherit}
+.sel{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.sel label{font-size:13px;color:var(--mut);display:flex;gap:6px;align-items:center}
+button{background:var(--bg);color:var(--fg);border:1px solid var(--grid);border-radius:8px;padding:5px 10px;font:inherit;font-size:13px;cursor:pointer}
+svg{width:100%;height:auto;display:block}svg text{fill:var(--fg);font-size:12px}svg .m{fill:var(--mut)}
+.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--grid)}th:first-child,td:first-child{text-align:left}th{color:var(--mut);font-weight:600}
+.note{color:var(--mut);font-size:12px;margin-top:10px}
+@media(max-width:520px){.row{grid-template-columns:1fr 54px}.row input{grid-column:1/3;order:3}}
+</style></head><body><main>
+<h1>Tomorrow’s ski traffic forecast</h1>
+<p class="sub">Predicted daily vehicles (both directions) at each mountain’s count station. Move the sliders to try different weather.</p>
+<div class="panel">
+ <div class="sel">
+  <label>Day <select id="dow"></select></label>
+  <label>Month <select id="mon"></select></label>
+  <button id="reset">Reset to forecast</button>
+ </div>
+ <div class="row"><label for="fall">New snowfall</label><input id="fall" type="range" min="0" max="18" step="1" value="0"><output id="fallv"></output></div>
+ <div class="row"><label for="depth">Snow depth (base)</label><input id="depth" type="range" min="0" max="70" step="1" value="9"><output id="depthv"></output></div>
+</div>
+<div class="panel"><svg id="chart" viewBox="0 0 760 340" role="img" aria-label="Predicted traffic by mountain"></svg></div>
+<div class="panel tbl"><table id="tbl"></table></div>
+<p class="note">Defaults match the Thursday, Nov 19 forecast for the four resorts: about a 10% chance of snow, so roughly dry, with a typical mid-November base of ~9 in. Model: per-mountain regression on 2023–2025 daily counts using day of week, month, snow depth and estimated new snowfall (day-over-day depth increase). It explains about 65% of day-to-day variation. Bars show the prediction and the line shows a ±1 standard deviation range. It ignores holidays, road closures, and events, and snowfall values above what the data commonly contains are extrapolations.</p>
+</main>
+<script>
+const MODEL={"Breckenridge":{"c":{"c":9.1703,"d_1":-0.0188,"d_2":0.012,"d_3":0.0351,"d_4":0.1336,"d_5":0.0436,"d_6":-0.0297,"m_2":0.0569,"m_3":0.0386,"m_4":-0.2705,"m_5":-0.3076,"m_6":-0.0436,"m_7":0.1439,"m_8":0.0393,"m_9":-0.047,"m_10":-0.2127,"m_11":-0.2985,"m_12":-0.0607,"depth":-0.0187,"fall":-0.1914},"sd":0.125},"Loveland":{"c":{"c":10.4652,"d_1":-0.143,"d_2":-0.0783,"d_3":0.0405,"d_4":0.266,"d_5":0.2169,"d_6":0.2692,"m_2":0.0686,"m_3":0.0933,"m_4":-0.1041,"m_5":-0.1509,"m_6":-0.0065,"m_7":0.1007,"m_8":0.0218,"m_9":-0.0087,"m_10":-0.1756,"m_11":-0.2788,"m_12":-0.0762,"depth":-0.0192,"fall":-0.1602},"sd":0.151},"Vail":{"c":{"c":10.4564,"d_1":-0.0237,"d_2":0.0065,"d_3":0.0579,"d_4":0.1348,"d_5":-0.0514,"d_6":-0.0707,"m_2":0.0299,"m_3":0.0904,"m_4":-0.0724,"m_5":-0.0306,"m_6":0.1929,"m_7":0.279,"m_8":0.2039,"m_9":0.1474,"m_10":0.0307,"m_11":-0.092,"m_12":0.0271,"depth":0.0092,"fall":-0.1583},"sd":0.098},"Winter Park":{"c":{"c":9.165,"d_1":-0.1246,"d_2":-0.0801,"d_3":0.0183,"d_4":0.3242,"d_5":0.2826,"d_6":0.3409,"m_2":0.0293,"m_3":-0.0345,"m_4":-0.3801,"m_5":-0.5273,"m_6":-0.2562,"m_7":-0.0307,"m_8":-0.1708,"m_9":-0.2386,"m_10":-0.5533,"m_11":-0.5755,"m_12":-0.1764,"depth":-0.0219,"fall":-0.0626},"sd":0.198}};
+const COL={"Loveland":"#2563eb","Breckenridge":"#f97316","Vail":"#16a34a","Winter Park":"#dc2626"};
+const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const $=id=>document.getElementById(id);
+DAYS.forEach((d,i)=>$("dow").add(new Option(d,i)));MON.forEach((m,i)=>$("mon").add(new Option(m,i+1)));
+function reset(){$("dow").value=3;$("mon").value=11;$("fall").value=0;$("depth").value=9;draw();}
+function pred(r,dow,mon,depth,fall){const c=MODEL[r].c;
+ let z=c.c+(dow>0?c["d_"+dow]:0)+(mon>1?c["m_"+mon]:0)+c.depth*depth/10+c.fall*fall/10;
+ const s=MODEL[r].sd;return{mid:Math.exp(z),lo:Math.exp(z-s),hi:Math.exp(z+s)};}
+const fmt=n=>Math.round(n).toLocaleString("en-US");
+function draw(){
+ const dow=+$("dow").value,mon=+$("mon").value,depth=+$("depth").value,fall=+$("fall").value;
+ $("fallv").textContent=fall+" in";$("depthv").textContent=depth+" in";
+ const rs=Object.keys(MODEL),P={},B={};
+ rs.forEach(r=>{P[r]=pred(r,dow,mon,depth,fall);B[r]=pred(r,dow,mon,depth,0).mid;});
+ const W=760,H=340,L=64,Rr=16,T=16,Bm=44,pw=W-L-Rr,ph=H-T-Bm;
+ let mx=Math.max(...rs.map(r=>P[r].hi),...rs.map(r=>B[r]));
+ const step=[5000,10000,20000].find(s=>mx/s<=6)||20000;mx=Math.ceil(mx/step)*step;
+ let s="";
+ for(let v=0;v<=mx;v+=step){const y=T+ph-v/mx*ph;
+  s+=`<line x1="${L}" x2="${W-Rr}" y1="${y}" y2="${y}" stroke="var(--grid)"/><text class="m" x="${L-8}" y="${y+4}" text-anchor="end">${fmt(v)}</text>`;}
+ const bw=pw/rs.length;
+ rs.forEach((r,i)=>{const p=P[r],x=L+i*bw+bw*0.2,w=bw*0.6,y=v=>T+ph-v/mx*ph;
+  s+=`<rect x="${x}" y="${y(p.mid)}" width="${w}" height="${T+ph-y(p.mid)}" rx="4" fill="${COL[r]}" opacity="0.85"/>`;
+  s+=`<line x1="${x+w/2}" x2="${x+w/2}" y1="${y(p.lo)}" y2="${y(p.hi)}" stroke="var(--fg)" stroke-width="1.5"/>`;
+  s+=`<line x1="${x+w/2-6}" x2="${x+w/2+6}" y1="${y(p.hi)}" y2="${y(p.hi)}" stroke="var(--fg)" stroke-width="1.5"/><line x1="${x+w/2-6}" x2="${x+w/2+6}" y1="${y(p.lo)}" y2="${y(p.lo)}" stroke="var(--fg)" stroke-width="1.5"/>`;
+  s+=`<line x1="${x-4}" x2="${x+w+4}" y1="${y(B[r])}" y2="${y(B[r])}" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+  s+=`<text x="${x+w/2}" y="${y(p.hi)-6}" text-anchor="middle" font-weight="600">${fmt(p.mid)}</text>`;
+  s+=`<text class="m" x="${x+w/2}" y="${H-20}" text-anchor="middle">${r}</text>`;});
+ s+=`<text class="m" x="${L}" y="${H-3}">Dashed line = same day with no new snowfall</text>`;
+ $("chart").innerHTML=s;
+ let t=`<tr><th>Mountain</th><th>Predicted</th><th>Range (±1 SD)</th><th>vs. no new snow</th></tr>`;
+ rs.forEach(r=>{const p=P[r],d=(p.mid/B[r]-1)*100;
+  t+=`<tr><td>${r}</td><td>${fmt(p.mid)}</td><td>${fmt(p.lo)}–${fmt(p.hi)}</td><td>${(d>=0?"+":"")+d.toFixed(0)}%</td></tr>`;});
+ $("tbl").innerHTML=t;}
+["dow","mon","fall","depth"].forEach(id=>$(id).addEventListener("input",draw));
+$("reset").addEventListener("click",reset);reset();
+</script></body></html>
