@@ -1,0 +1,239 @@
+"""
+SKI DAY PREDICTOR (simple) -- MCEN 1030 final project
+Give a date (required) and anything else you know. The code finds past days
+(2023-2025) that look most like your day and reports what happened.
+It describes the past. It is NOT a weather forecast.
+
+FILES (drag all 4 into Colab's Files panel first)
+1. ski_temps_2023_2025_clean.csv    1096 days: date, average temperature
+   (degrees F) for each resort, e.g. Vail_avg_temp_F.
+2. ski_snowfall_2023_2025 CVS.csv   1096 days: date, snowfall in mm of
+   liquid water for each resort (converted to inches, 0.4 in per mm).
+3. ski_snow_depth_in_2023_2025.csv  1096 days: date, snow depth (in) for
+   each resort. Its dates line all the files up.
+4. snow_depth_traffic_merged.csv    4099 rows: RESORT, date, total
+   (highway vehicles that day), wkend, ... (traffic missing some days).
+
+Day of week matters: traffic differs by weekday (Fri/Sat/Sun busiest), so
+the code prefers past days with the SAME weekday. In a test on unseen days
+this cut the traffic miss from about 10% to about 8%.
+
+Crowd score 1-10 = where the expected traffic ranks among normal days
+(same weekend/weekday type, within 30 days of the date) at that resort.
+1 = quietest, 5-6 = normal, 10 = busiest. Highway vehicles, NOT skiers.
+"""
+import numpy as np
+import pandas as pd
+
+# ---------------- 1. INPUTS (use None for what you don't know) ----------
+DATE = "2026-12-20"        # required, YYYY-MM-DD
+DAY_OF_WEEK = None         # optional: "Monday" ... "Sunday" (None = use the date)
+TEMP_F = 20              # average temperature, degrees F
+SNOW_TODAY_IN = None       # new snow today, inches
+SNOW_YESTERDAY_IN = None   # new snow yesterday, inches
+SNOW_3DAY_IN = None        # new snow over the past 3 days, inches
+K = 15                     # how many similar days to use
+
+# ---------------- 2. LOAD THE FILES ----------------
+temp_df = pd.read_csv("ski_temps_2023_2025_clean.csv")
+snow_df = pd.read_csv("ski_snowfall_2023_2025 CVS.csv")
+depth_df = pd.read_csv("ski_snow_depth_in_2023_2025.csv")
+traffic_df = pd.read_csv("snow_depth_traffic_merged.csv")
+
+dates = np.array(depth_df["date"])
+n = len(dates)
+cal = pd.to_datetime(depth_df["date"])
+doy_all = np.array(cal.dt.dayofyear)
+dow_all = np.array(cal.dt.dayofweek)          # Monday = 0 ... Sunday = 6
+weekend_all = dow_all >= 5
+W_DAY = 1.0                                   # extra weight: same exact weekday
+KEYS = ["temp", "depth", "snow0", "snow1", "snow3", "next1", "veh", "doy",
+        "wkend", "dow"]
+
+
+# ---------------- 3. HISTORY FOR ONE RESORT (-999 = unknown) ----------
+def fill(x):
+    """Array copy with missing (NaN) values replaced by -999."""
+    out = np.full(len(x), -999.0)
+    for i in range(len(x)):
+        if x[i] > -100:
+            out[i] = x[i]
+    return out
+
+
+def history(resort):
+    """Dictionary of arrays, one entry per calendar day, for one resort."""
+    snow0 = fill(np.array(snow_df[resort + "_snowfall_mm"]) * 0.4)
+    snow1 = np.full(n, -999.0)
+    snow3 = np.full(n, -999.0)
+    next1 = np.full(n, -999.0)
+    for d in range(n):
+        if d >= 1:
+            snow1[d] = snow0[d - 1]
+        if d >= 2 and min(snow0[d], snow0[d - 1], snow0[d - 2]) > -100:
+            snow3[d] = snow0[d] + snow0[d - 1] + snow0[d - 2]
+        if d + 1 < n:
+            next1[d] = snow0[d + 1]
+    veh = np.full(n, -999.0)
+    sub = traffic_df[traffic_df["RESORT"] == resort]
+    for i in range(len(sub)):
+        d = (dates == np.array(sub["date"])[i]).argmax()
+        veh[d] = np.array(sub["total"])[i]
+    return {"temp": fill(np.array(temp_df[resort + "_avg_temp_F"])),
+            "depth": fill(np.array(depth_df[resort + "_snow_depth_in"])),
+            "snow0": snow0, "snow1": snow1, "snow3": snow3, "next1": next1,
+            "veh": veh, "doy": doy_all, "wkend": weekend_all,
+            "dow": dow_all}
+
+
+def keep(h, mask):
+    """History h with only the days where mask is True."""
+    out = {}
+    for key in KEYS:
+        out[key] = h[key][mask]
+    return out
+
+
+# ---------------- 4. FIND THE MOST SIMILAR PAST DAYS ----------------
+def doy_gap(doy_array, doy):
+    """Days apart on the calendar circle."""
+    gap = np.sqrt((doy_array - doy) ** 2)
+    return gap + (gap > 182) * (365 - 2 * gap)
+
+
+def term(values, target, weight, use_sqrt):
+    """Weighted squared difference, scaled by the range of the values."""
+    v = values * 1.0
+    t = target
+    if use_sqrt:                       # snow: sqrt so big storms don't dominate
+        v = np.sqrt(values * (values > 0))
+        t = np.sqrt(target)
+    good = v[values > -100]
+    return weight * ((v - t) / (good.max() - good.min())) ** 2
+
+
+def similar_days(h, doy, weekend, dow, need_traffic):
+    """Indices of the K past days most like the given day."""
+    total = 2.0 * (doy_gap(h["doy"], doy) / 30.0) ** 2
+    total = total + 0.5 * (h["wkend"] != weekend)
+    total = total + W_DAY * (h["dow"] != dow)       # same weekday is closer
+    ok = h["doy"] > 0
+    if need_traffic:
+        ok = ok & (h["veh"] > -100)
+    for key, target, weight, use_sqrt in [
+            ("temp", TEMP_F, 1.0, False), ("snow0", SNOW_TODAY_IN, 0.7, True),
+            ("snow1", SNOW_YESTERDAY_IN, 0.5, True),
+            ("snow3", SNOW_3DAY_IN, 0.5, True)]:
+        if target is not None:
+            total = total + term(h[key], target, weight, use_sqrt)
+            ok = ok & (h[key] > -100)
+    dist = np.sqrt(total) + 1e9 * (ok == False)
+    chosen = []
+    for j in range(min(K, len(dist))):
+        best = (-dist).argmax()
+        chosen.append(best)
+        dist[best] = 1e10
+    return np.array(chosen)
+
+
+def average(x):
+    """Average of the known values (> -100) in x."""
+    return x[x > -100].mean()
+
+
+def words(score):
+    """Plain words for a 1-10 crowd score."""
+    if score <= 2:
+        return "Very quiet"
+    elif score <= 4:
+        return "Light"
+    elif score <= 6:
+        return "Normal"
+    elif score <= 8:
+        return "Busy"
+    return "Very busy"
+
+
+def pad(text, width):
+    """Text with spaces on the right so columns line up."""
+    return text + " " * (width - len(text))
+
+
+# ---------------- 5. PREDICT EACH RESORT ----------------
+day = pd.Timestamp(DATE)
+doy = day.dayofyear
+dow = day.dayofweek
+names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+         "Sunday"]
+if DAY_OF_WEEK is not None:                    # you told me the weekday
+    dow = names.index(DAY_OF_WEEK)
+weekend = dow >= 5
+day_pos = (cal == day)                         # is this date in the data?
+resorts = ["Loveland", "Breckenridge", "Vail", "Winter_Park"]
+out = {}
+for name in resorts:
+    h = history(name)
+    if day_pos.sum() > 0:                      # leave the real day out
+        h = keep(h, np.array(~day_pos))
+    it = similar_days(h, doy, weekend, dow, True)   # similar days with traffic
+    ia = similar_days(h, doy, weekend, dow, False)  # similar days, any
+    est = h["veh"][it].mean()
+    near = (doy_gap(h["doy"], doy) <= 30) & (h["wkend"] == weekend)
+    base = np.sort(h["veh"][near & (h["veh"] > -100)])
+    typical = base[int(0.5 * (len(base) - 1))]
+    pct = (base < est).sum() / len(base) * 100
+    snow = SNOW_TODAY_IN
+    if snow is None:
+        snow = average(h["snow0"][ia])
+    temp = TEMP_F
+    if temp is None:
+        temp = average(h["temp"][ia])
+    nx = h["next1"][ia]
+    nx = nx[nx > -100]
+    out[name] = {"score": int(round(1 + 0.09 * pct)),
+                 "change": (est - typical) / typical * 100,
+                 "snow": snow, "temp": temp,
+                 "depth": average(h["depth"][ia]),
+                 "chance": (nx >= 0.4).sum() / len(nx) * 100,
+                 "tomorrow": nx.mean()}
+
+# ---------------- 6. THE REPORT ----------------
+print("SKI REPORT:", names[dow], str(day)[:10])
+if dow != day.dayofweek:
+    print("NOTE: that date is really a", names[day.dayofweek] + ";",
+          "using the", names[dow], "you asked for.")
+print("Estimates are from similar past days (2023-2025), not a forecast.")
+if SNOW_TODAY_IN is not None or TEMP_F is not None:
+    print("Your temperature / snow numbers are used for all four resorts.")
+print()
+print(pad("Resort", 14), pad("Crowds", 18), pad("Vs typical", 14),
+      pad("New snow", 9), pad("Base", 7), pad("Temp", 8), "Snow tomorrow")
+for name in resorts:
+    r = out[name]
+    change = int(round(r["change"]))
+    if change > -3 and change < 3:
+        vs = "normal"
+    elif change > 0:
+        vs = str(change) + "% busier"
+    else:
+        vs = str(-change) + "% lighter"
+    print(pad(name.replace("_", " "), 14),
+          pad(words(r["score"]) + " (" + str(r["score"]) + "/10)", 18),
+          pad(vs, 14), pad(str(round(r["snow"], 1)) + " in", 9),
+          pad(str(int(round(r["depth"]))) + " in", 7),
+          pad(str(int(round(r["temp"]))) + " F", 8),
+          str(int(round(r["chance"]))) + "% chance")
+print()
+quiet = resorts[0]
+snowy = resorts[0]
+for name in resorts:
+    if out[name]["score"] < out[quiet]["score"]:
+        quiet = name
+    if out[name]["chance"] > out[snowy]["chance"]:
+        snowy = name
+print("Lightest crowds:", quiet.replace("_", " "))
+print("Best chance of snow tomorrow:", snowy.replace("_", " "))
+print()
+print("Crowds = highway traffic compared with a normal day at that resort,")
+print("NOT lift lines. Snow tomorrow = share of similar past days that got")
+print("0.4 in or more the next day. Add real snowfall for a better guess.")
